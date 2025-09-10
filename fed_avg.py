@@ -10,6 +10,7 @@ import pandas as pd
 from PIL import Image
 import torch.optim as optim
 import kagglehub
+ import matplotlib.pyplot as plt
 
 path = kagglehub.dataset_download("tawsifurrahman/covid19-radiography-database")
 
@@ -236,3 +237,50 @@ class FedEraser:
     
         self.global_model.load_state_dict(global_dict)
         print(f"Client {client_id+1} successfully unlearned from round {start_round} to 0.")
+
+## Main function
+global_accs = []
+unlearned_accs = []
+checkpoint = torch.load("checkpoints/fed_checkpoint.pth", map_location=device, weights_only=True)
+
+for round_idx in range(num_rounds):
+    # Load global model at round r
+    global_model = ResNet50Gray().to(device)
+    global_model.load_state_dict(torch.load(global_model_history_paths[round_idx], map_location=device, weights_only=True))
+
+    # Accuracy before unlearning
+    acc = evaluate_model(global_model, test_loader, device)
+    global_accs.append(acc)
+
+    # Clone model for unlearning
+    unlearn_model = ResNet50Gray().to(device)
+    unlearn_model.load_state_dict(torch.load(checkpoint["global_model_history_paths"][round_idx], weights_only=True))
+
+    fed_eraser = FedEraser(learning_rate=0.01, global_model=unlearn_model, checkpoint=checkpoint, device=device)
+    fed_eraser.apply_gradient_ascent_from_round(client_id=2, start_round=round_idx)
+
+    # Accuracy after unlearning
+    acc_unlearned = evaluate_model(unlearn_model, test_loader, device)
+    unlearned_accs.append(acc_unlearned)
+
+## Plots
+rounds = list(range(num_rounds))  # [0, 1, 2, ..., num_rounds-1]
+plt.plot(rounds, global_accs, label="Global Accuracy", color='blue')
+plt.xlabel("Round")
+plt.ylabel("Accuracy")
+plt.title("Global Accuracy Over Rounds")
+plt.legend()
+plt.grid()
+plt.show()
+
+rounds = list(range(num_rounds))  # e.g., [0, 1, 2, ..., 19]
+plt.plot(rounds, global_accs, label="Global Accuracy")
+plt.plot(rounds, unlearned_accs, label="Unlearned Accuracy")
+
+plt.xlabel("Round")
+plt.ylabel("Accuracy")
+plt.title("Global vs Unlearned Accuracy over Rounds")
+plt.xticks(rounds)  # Ensures x-axis has whole number ticks
+plt.legend()
+
+plt.show()
