@@ -193,3 +193,46 @@ for round in range(num_rounds):
     # Federated Averaging
     client_models = [torch.load(path, map_location=device, weights_only=True) for path in client_model_paths]
     global_model = average_models_from_state_dicts(global_model, client_models)
+
+## Saving Global State into Disk
+os.makedirs("checkpoints", exist_ok=True)
+torch.save({
+    "global_model_state_dict": global_model.state_dict(),
+    "client_model_history_paths": client_model_history_paths,
+    "global_model_history_paths": global_model_history_paths,
+    "num_rounds": num_rounds,
+    "num_clients": len(train_loaders),
+}, "checkpoints/fed_checkpoint.pth")
+
+# FedEraser
+class FedEraser:
+    def __init__(self, learning_rate, global_model, checkpoint, device):
+        self.learning_rate = learning_rate
+        self.global_model = global_model
+        self.device = device
+        self.checkpoint = checkpoint
+
+    def apply_gradient_ascent_from_round(self, client_id, start_round):
+        global_dict = self.global_model.state_dict()
+    
+        for round_idx in reversed(range(start_round + 1)):
+            # Load previous global model
+            prev_global_state = torch.load(self.checkpoint["global_model_history_paths"][round_idx], map_location=self.device)
+    
+            # Load client model for that round
+            client_path = self.checkpoint["client_model_history_paths"][round_idx][client_id]
+            client_state = torch.load(client_path, map_location=self.device)
+    
+            # Compute the update
+            update = {
+                key: client_state[key] - prev_global_state[key]
+                for key in global_dict.keys()
+                if global_dict[key].dtype.is_floating_point
+            }
+    
+            # Apply gradient ascent
+            for key in update:
+                global_dict[key] -= self.learning_rate * update[key]
+    
+        self.global_model.load_state_dict(global_dict)
+        print(f"Client {client_id+1} successfully unlearned from round {start_round} to 0.")
